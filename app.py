@@ -185,6 +185,8 @@ def health():
     return jsonify({"status": "Al-Harmain order API chal raha hai"})
 
 
+init_db()  # gunicorn module ko sirf "import" karta hai, isay __main__ guard
+           # ke bahar rakhna zaroori hai warna table kabhi nahi bante.
+
 if __name__ == "__main__":
-    init_db()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
