@@ -68,21 +68,59 @@ def init_db():
     conn.close()
 
 
+# PUBLIC key (website mein likhi jati hai): sirf naya order bhej sakti hai, aur kuch nahi.
+# Render > Environment mein ALHARMAIN_SITE_KEY set karein (HTML ke SITE_KEY jaisi).
+SITE_KEY = os.environ.get("ALHARMAIN_SITE_KEY", "change-this-site-key")
+
+
 def check_key():
+    """ADMIN key - orders parhna, mark_fetched, config save. Sirf aapka software."""
+    return request.headers.get("X-API-Key") == API_KEY
+
+
+def check_site_key():
     key = request.headers.get("X-API-Key")
-    return key == API_KEY
+    return key == SITE_KEY or key == API_KEY
+
+
+@app.after_request
+def add_cors(resp):
+    """Browser (website) ko is API se baat karne ki ijazat."""
+    resp.headers["Access-Control-Allow-Origin"] = os.environ.get("ALHARMAIN_SITE_ORIGIN", "*")
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type, X-API-Key"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    return resp
+
+
+def trusted_items(items):
+    """Price website se nahi, software ki publish ki hui list se lete hain (chhed-chhaad se bachao)."""
+    conn = get_db()
+    row = conn.execute("SELECT config_json FROM site_config WHERE id = 1").fetchone()
+    conn.close()
+    prices = {}
+    if row:
+        for p in json.loads(row["config_json"]).get("products", []):
+            prices[p.get("sku")] = float(p.get("price", 0))
+    out = []
+    for it in items[:50]:
+        qty = max(1, min(int(it.get("qty", 1)), 1000))
+        price = prices.get(it.get("sku"), float(it.get("price", 0)))
+        out.append({**it, "qty": qty, "price": price})
+    return out
 
 
 @app.route("/api/orders", methods=["POST"])
 def create_order():
     """Website is endpoint par naya order bhejti hai."""
-    if not check_key():
+    if not check_site_key():
         return jsonify({"error": "unauthorized"}), 401
 
     data = request.get_json(force=True, silent=True) or {}
     required = ["customer_name", "phone", "items", "total"]
-    if not all(k in data for k in required):
+    if not all(k in data for k in required) or not isinstance(data["items"], list) or not data["items"]:
         return jsonify({"error": "missing fields", "required": required}), 400
+    data["items"] = trusted_items(data["items"])
+    data["total"] = sum(i["price"] * i["qty"] for i in data["items"])
 
     conn = get_db()
     conn.execute(
